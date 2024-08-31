@@ -1,0 +1,54 @@
+name: DEPLOY TO SFTP # Nome do workflow, indicando que ele faz o deploy para um servidor SFTP
+
+on: 
+  push: 
+    branches: 
+      - main # Especifica que o workflow será acionado sempre que houver um push na branch "main"
+
+jobs: 
+  list_directories_job: # Nome do job, executando passos para listar diretórios e fazer o deploy
+    runs-on: ubuntu-latest # Define que o job será executado em um ambiente Ubuntu na versão mais recente
+
+    steps: 
+    - name: Checkout code # Passo para fazer o checkout do código do repositório
+      uses: actions/checkout@v3 # Usa a ação do GitHub para fazer o checkout do código
+
+    - name: Install OpenVPN # Passo para instalar o OpenVPN no Ubuntu
+      run: |
+        sudo apt-get update # Atualiza a lista de pacotes
+        sudo apt-get install -y openvpn # Instala o OpenVPN
+
+    - name: Setup OpenVPN Configuration # Passo para configurar o OpenVPN usando os segredos armazenados no GitHub
+      run: |
+        mkdir -p ~/.openvpn # Cria o diretório para armazenar a configuração do OpenVPN
+        echo "${{ secrets.VPN_CONFIG }}" | base64 -d > ~/.openvpn/config.ovpn # Decodifica e salva a configuração do OpenVPN
+        echo "${{ secrets.VPN_AUTH }}" | base64 -d > ~/.openvpn/auth.txt # Decodifica e salva as credenciais de autenticação do OpenVPN
+        chmod 600 ~/.openvpn/config.ovpn # Define permissões de leitura para o arquivo de configuração
+        chmod 600 ~/.openvpn/auth.txt # Define permissões de leitura para o arquivo de autenticação
+
+    - name: Connect to VPN # Passo para conectar à VPN usando o OpenVPN
+      run: |
+        sudo openvpn --config ~/.openvpn/config.ovpn --auth-user-pass ~/.openvpn/auth.txt --daemon # Inicia o OpenVPN em segundo plano
+
+    - name: Wait for VPN Connection # Passo para aguardar a conexão com a VPN ser estabelecida
+      run: sleep 15 # Aguarda 15 segundos para garantir que a conexão VPN foi estabelecida
+
+    - name: Setup SSH Key # Passo para configurar a chave SSH para acessar o SFTP
+      run: |
+        mkdir -p ~/.ssh # Cria o diretório .ssh, se não existir
+        echo "${{ secrets.SFTP_PRIVATE_KEY }}" > ~/.ssh/id_rsa # Salva a chave privada SSH
+        chmod 600 ~/.ssh/id_rsa # Define permissões de leitura para a chave SSH
+
+    - name: List directories via SFTP # Passo para listar diretórios no servidor SFTP via comando SFTP
+      run: |
+        sftp -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no -o ConnectTimeout=30 ${{ secrets.SFTP_USERNAME }}@${{ secrets.SFTP_HOST }} <<EOF # Conecta ao servidor SFTP e lista os diretórios
+        ls -la /caminho/para/diretório/no/servidor/ # Lista os arquivos e diretórios no caminho especificado
+        bye # Encerra a sessão SFTP
+        EOF
+
+    - name: Deploy to SFTP # Passo para fazer o deploy dos arquivos para o servidor SFTP
+      run: |
+        sftp -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no -o ConnectTimeout=30 ${{ secrets.SFTP_USERNAME }}@${{ secrets.SFTP_HOST }} <<EOF # Conecta ao servidor SFTP e faz o upload dos arquivos
+        put -r ./* /caminho/para/diretório/no/servidor/ # Faz o upload dos arquivos do diretório local para o servidor
+        bye # Encerra a sessão SFTP
+        EOF
